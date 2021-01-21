@@ -104,14 +104,13 @@ void profile_matrix_times_vector(int n, OpenCL& opencl) {
     matrix_times_vector(a, b, expected_result);
     auto t1 = clock_type::now();
     cl::Buffer d_a(opencl.queue, begin(a), end(a), true);
-    cl::Buffer d_b(opencl.queue, begin(b), end(b), true);
+    cl::Buffer d_b(opencl.queue, begin(b), end(b), true); 
     cl::Buffer d_result(opencl.context, CL_MEM_READ_WRITE, result.size()*sizeof(float));
-    cl::Buffer local_result(opencl.context, CL_MEM_READ_WRITE, 128*sizeof(float));
     kernel.setArg(0, d_a);
     kernel.setArg(1, d_b);
     kernel.setArg(2, d_result);
     kernel.setArg(3, n);
-    kernel.setArg(4, local_result);
+    kernel.setArg(4, cl::Local(128*sizeof(float)));
     opencl.queue.flush();
     auto t2 = clock_type::now();
     opencl.queue.enqueueNDRangeKernel(kernel, cl::NullRange, cl::NDRange(n), cl::NDRange(128));
@@ -164,24 +163,24 @@ kernel void matrix_times_vector(global float* a,
                                 global float* result,
                                 int n,
                                 local float* tileResult) {
-    const int i = get_global_id(0);
+    for (int i = get_group_id(0); i < n; i += get_num_groups(0)) {
+        float sum = 0;
+        for (int j = get_local_id(0); j < n; j += get_local_size(0))
+            sum += a[i*n+j] * b[j];
 
-    float sum = 0;
-    for (int j = get_local_id(0); j < n; x += get_local_size(0))
-        sum += a[i*n+j] * b[j];
+        tileResult[get_local_id(0)] = sum;
 
-    tileResult[get_local_id(0)] = sum;
+        barrier(CLK_LOCAL_MEM_FENCE);
 
-    barrier(CL_LOCAL_MEM_FENCE);
+        if (get_local_id(0) == 0) {
+            float dotProduct = 0;
+            for (int t = 0; t < get_local_size(0); ++t)
+                dotProduct += tileResult[t];
+            result[i] = dotProduct;
+        }
 
-    if (get_local_id(0) == 0) {
-        float dotProduct = 0;
-        for (int t = 0; t < get_local_size(0); ++t)
-            dotProduct += tileResult[t];
-        result[i] = dotProduct;
+        barrier(CLK_LOCAL_MEM_FENCE);
     }
-
-    barrier(CLK_LOCAL_MEM_FENCE);
 }
 
 kernel void matrix_times_matrix(global float* a,
@@ -203,7 +202,7 @@ int main() {
         cl::Platform platform = platforms[0];
         std::clog << "Platform name: " << platform.getInfo<CL_PLATFORM_NAME>() << '\n';
         // create context
-        cl_context_properties properties[] =
+	cl_context_properties properties[] =
             { CL_CONTEXT_PLATFORM, (cl_context_properties)platform(), 0};
         cl::Context context(CL_DEVICE_TYPE_GPU, properties);
         // get all devices associated with the context
