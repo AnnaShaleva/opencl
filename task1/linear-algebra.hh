@@ -6,6 +6,8 @@
 #include <random>
 #include <valarray>
 
+#define BLOCK_SIZE 16
+
 template <class T>
 class Vector: public std::valarray<T> {
 public:
