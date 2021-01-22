@@ -6,6 +6,8 @@
 #include <random>
 #include <valarray>
 
+#define BLOCK_SIZE 16
+
 template <class T>
 class Vector: public std::valarray<T> {
 public:
@@ -149,7 +151,7 @@ matrix_transpose(Matrix<T>& a) {
 }
 
 template <class T> void
-verify_vector(const Vector<T>& expected, const Vector<T>& actual, T eps=T{1e-6}) {
+verify_vector(const Vector<T>& expected, const Vector<T>& actual, T eps=T{1e-1}) {
     const auto n1 = expected.size(), n2 = actual.size();
     if (n1 != n2) {
         std::stringstream msg;
