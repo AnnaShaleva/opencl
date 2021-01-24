@@ -81,9 +81,6 @@ void profile_reduce(int n, OpenCL& opencl) {
 //    cl::Buffer d_a(opencl.queue, begin(a), end(a), true);
     cl::Buffer d_a(opencl.context, CL_MEM_READ_WRITE | CL_MEM_USE_HOST_PTR, n*sizeof(float), &a[0]);
     cl::Buffer d_result(opencl.context, CL_MEM_READ_WRITE, 1*sizeof(float));
-    //for (int i = 0; i < 5; i++){
-//	    std::cout << std::setw(20) << a[i];
-    //}
     kernel_reduce.setArg(0, d_a);
     kernel_reduce.setArg(1, cl::Local(local_size*sizeof(float)));
     kernel_complete.setArg(0, d_a);
@@ -117,15 +114,40 @@ void profile_reduce(int n, OpenCL& opencl) {
 void profile_scan_inclusive(int n) {
     auto a = random_vector<float>(n);
     Vector<float> result(a), expected_result(a);
+    int global_size = n;
+    int local_size = 128;
+    Vector<cl:Buffer> tiles;
+    cl::Kernel kernel_scan(opencl.program, "scan_inclusive");
+    cl::Kernel kernel_complete(opencl.program, "scan_complete");
     auto t0 = clock_type::now();
     scan_inclusive(expected_result);
     auto t1 = clock_type::now();
+    cl::Buffer d_a(opencl.queue, begin(a), end(a), false);
+    tiles.emplace_back(d_a);
     auto t2 = clock_type::now();
+    int i = 0;
+    while(global_size/local_size > local_size) {
+        global_size = global_size/local_size;
+        cl::Buffer tile_result(opencl.context, CL_MEM_READ_WRITE, global_size*sizeof(float));
+        tiles.emplace_back(tile_result);
+        kernel_scan.setArg(0, tiles[i]);
+        kernel_scan.setArg(1, tiles[i+1]);
+        kernel_scan.setArg(2, cl::Local(local_size*sizeof(float)));
+        opencl.queue.enqueueNDRangeKernel(kernel_scan, cl::NullRange, cl::NDRange(global_size), cl::NDRange(local_size));
+        //opencl.queue.flush();
+        i++;
+    }
+    for (int j = i-1; j >= 1; j--) {
+        kernel_complete.setArg(0, tiles[j-1]);
+        kernel_complete.setArg(0, tiles[j]);
+        opencl.queue.enqueueNDRangeKernel(kernel_complete, cl::NullRange, cl::NDRange(global_size), cl::NullRange);
+        //opencl.queue.flush();
+        global_size = global_size*local_size;
+    }
     auto t3 = clock_type::now();
+    cl::copy(opencl.queue, d_a, begin(result), end(result));
     auto t4 = clock_type::now();
-    // TODO Implement OpenCL version! See profile_vector_times_vector for an example.
-    // TODO Uncomment the following line!
-    //verify_vector(expected_result, result);
+    verify_vector(expected_result, result);
     print("scan-inclusive",
           {t1-t0,t4-t1,t2-t1,t3-t2,t4-t3},
           {bandwidth(n*n+n*n+n*n, t0, t1), bandwidth(n*n+n*n+n*n, t2, t3)});
@@ -147,13 +169,12 @@ kernel void reduce(global float* a,
     tileResult[local_id] = a[get_global_id(0)];
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (int offset = local_size/2; offset>0; offset /=2)
-        {
-            if (local_id < offset)
-                tileResult[local_id] += tileResult[local_id + offset];
+    for (int offset = local_size/2; offset>0; offset /=2) {
+        if (local_id < offset)
+            tileResult[local_id] += tileResult[local_id + offset];
 
-            barrier(CLK_LOCAL_MEM_FENCE);
-        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
         
     if (local_id == 0) {
         int group_id = get_group_id(0);
@@ -184,9 +205,35 @@ kernel void reduce_complete(global float* a,
 }
 
 kernel void scan_inclusive(global float* a,
-                           global float* b,
-                           global float* result) {
-    // TODO: Implement OpenCL version.
+                            global float* result,
+                            local float* tileResult) {
+    int local_id = get_local_id(0); // номер потока в группе
+    int local_size = get_local_size(0); // кол-во потоков в группе
+
+    tileResult[local_id] = a[get_global_id(0)];
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for(int offset = 1; offset < local_size; offset *= 2) {
+        float sum = 0;
+        if(local_id >= offset) {
+            sum += tileResult[local_id - offset];
+            tileResult[local_id] += sum;
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    a[get_global_id(0)] = tileResult[local_id];
+
+    if (local_id == 0) {
+        int group_id = get_group_id(0);
+       	result[group_id] = tileResult[0];
+    }
+}
+
+kernel void scan_complete(global float* a, 
+                            global float* tileResult) {
+    a[get_global_id(0)] += tileResult[get_group_id(0)-1];
 }
 )";
 
