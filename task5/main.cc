@@ -406,7 +406,7 @@ kernel void compute_density_and_pressure(global const float* positions,
         float bY = positions[i*2+1];
         float sd = (bX - aX)*(bX - aX) + (bY - aY)*(bY - aY);
         if (sd < kernel_radius_squared) {
-            sum += particle_mass*(float)poly6*pow((float)kernel_radius_squared-sd, 3.f);
+            sum += particle_mass*poly6*pow(kernel_radius_squared-sd, 3);
         }
     }
     densities[global_id] = sum;
@@ -445,7 +445,7 @@ kernel void compute_forces(global const float* positions,
     float2 gravity_force = G * a_density;
     float2 f = pressure_force + viscosity_force + gravity_force;
     forces[global_id*2] = f[0];
-    forces[global_id*2+1] = f[1];
+    forces[global_id*2+1] = f[1]; 
 }
 
 kernel void compute_positions(global float* positions,
@@ -469,7 +469,9 @@ kernel void compute_positions(global float* positions,
     float2 velocity_incr = time_step*force/density;
     velocities[global_id*2] += velocity_incr[0];
     velocities[global_id*2+1] += velocity_incr[1];
-    float2 position_incr = time_step*velocity;
+
+    float2 velocity_updated = (float2)(velocities[global_id*2], velocities[global_id*2+1]);
+    float2 position_incr = time_step*velocity_updated;
     positions[global_id*2] += position_incr[0];
     positions[global_id*2+1] += position_incr[1];
 
