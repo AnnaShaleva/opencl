@@ -5,7 +5,7 @@
 
 int window_width = 800, window_height = 600;
 GLuint fbo, render_buf;
-bool no_screen = false;
+bool no_screen = true;
 thx::screen_recorder recorder("out.ogv", window_width, window_height);
 
 void init_opengl(float point_size) {
